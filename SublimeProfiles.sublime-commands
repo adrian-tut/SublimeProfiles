@@ -1,0 +1,8 @@
+[
+    { "caption": "SublimeProfiles: Login", "command": "profiles_login" },
+    { "caption": "SublimeProfiles: Create Profile", "command": "profiles_create" },
+    { "caption": "SublimeProfiles: Delete Profile", "command": "profiles_delete" },
+    { "caption": "SublimeProfiles: Switch Profile", "command": "profiles_switch" },
+    { "caption": "SublimeProfiles: Sync Profile", "command": "profiles_sync" },
+    { "caption": "SublimeProfiles: List Profiles", "command": "profiles_list" },
+]
