@@ -1,6 +1,10 @@
 # SublimeProfiles
 ## Profile manager plugin for sublime.
-Finally! The missing Profile Manager from sublime is finally here!
+The missing Profile Manager from sublime is finally here!
+
+## Google Drive support
+[![google drive](https://raw.githubusercontent.com/adrian-tut/SublimeProfiles/master/icons/drive.png)](https://www.google.com/drive/)
+
 It stores your data on your own Google Drive account, making easy to recreate your very own environment anywhere you go.
 
 ## Profile syncronization support for:
