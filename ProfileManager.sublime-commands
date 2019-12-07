@@ -1,0 +1,8 @@
+[
+    { "caption": "ProfileManager: Login", "command": "profiles_login" },
+    { "caption": "ProfileManager: Create Profile", "command": "profiles_create" },
+    { "caption": "ProfileManager: Delete Profile", "command": "profiles_delete" },
+    { "caption": "ProfileManager: Switch Profile", "command": "profiles_switch" },
+    { "caption": "ProfileManager: Sync Profile", "command": "profiles_sync" },
+    { "caption": "ProfileManager: List Profiles", "command": "profiles_list" },
+]
