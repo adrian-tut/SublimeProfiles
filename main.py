@@ -396,28 +396,28 @@ def sync_active_profile():
     profile_name = get_meta('active_profile', None)
     if profile_name is None:
         print('ProfileManager: No profile selected!')
-        return
+        return 0
+
+    if gdrive.logged_in() == False:
+        print('ProfileManager: Cannot sync profile "{}" because we are not logged in!'.format(profile_name))
+        return 0
+    gd = GDrive()
+    gd.login()
 
     meta = gd.file_info('profiles_info')
     if meta is None:
         print('ProfileManager: Cannot sync changes to profile "{}" because no meta information can be found online!'.format(profile_name))
-        return
+        return 0
 
     # someone else changed the profiles info, we can sync our local changes to the cloud
     elif meta['md5Checksum'] != get_meta('profiles_info'):
         print('ProfileManager: Cannot push updates to profile "{}" because of remote changes!'.format(profile_name))
-        return
+        return -1
 
     print('ProfileManager: ----------------------------------------------------------------------------------')
     print('ProfileManager: Syncing profile "{}"'.format(profile_name))
     print('ProfileManager: ----------------------------------------------------------------------------------')
 
-    if gdrive.logged_in() == False:
-        print('ProfileManager: Cannot sync profile "{}" because we are not logged in!'.format(profile_name))
-        return False
-
-    gd = GDrive()
-    gd.login()
     data = gd.get_file_contents('profiles_info')
     profile_info = json.loads(data)
 
@@ -443,6 +443,7 @@ def sync_active_profile():
     print('ProfileManager: ----------------------------------------------------------------------------------')
     print('ProfileManager: Synced profile "{}"'.format(profile_name))
     print('ProfileManager: ----------------------------------------------------------------------------------')
+    return 1
 
 def switch_profile(profile_name):
     sync_active_profile()
@@ -721,13 +722,23 @@ class ProfilesDelete(sublime_plugin.ApplicationCommand):
                 t.start()
             sublime.active_window().show_quick_panel(profile_names, fun)
 
+# either updates the remote or the local changes, depending on which is more recent
+def bidirectional_sync():
+    # there are remote changes, we should our local mirror
+    if sync_active_profile() < 0:
+        profile_name = get_meta('active_profile')
+        # drop our changes and use remote instead
+        set_meta('active_profile', None)
+        switch_profile(profile_name)
+
 class ProfilesSync(sublime_plugin.ApplicationCommand):
     def run(self):
         if gdrive.logged_in() == False:
             content = 'ProfileManager: You are not logged in, please try to log in manually using the "ProfileManager: Login" command'
             sublime.error_message(content)
         else:
-            t = threading.Thread(target=sync_active_profile)
+
+            t = threading.Thread(target=bidirectional_sync)
             t.start()
 
 
@@ -754,7 +765,7 @@ def sync_active_profile_thread():
             elapsed_time = time.time() - last_time
             if elapsed_time >= sync_time:
                 last_time = time.time()
-                sync_active_profile()
+                bidirectional_sync() # TODO: this makes relative large changes behind the scenes... hidden from the user
                 print('ProfileManager: Syncing complete!')
             time.sleep(0.1)
     except Exception as e:
