@@ -1,5 +1,4 @@
 """
-
 """
 
 import os
@@ -45,6 +44,11 @@ def md5_file(filename):
             chunk = f.read(8192)
 
     return file_hash.hexdigest()
+
+def md5_string(content):
+    md5 = hashlib.md5()
+    md5.update(content.encode())
+    return md5.hexdigest()
 
 
 def zipdir(path, ziph, ignore_dirs = [], ignore_files = []):
@@ -272,8 +276,33 @@ def set_setting(name, value):
     sublime.save_settings('ProfileManager.sublime-settings')
 
 
+def get_meta(name, default=None):
+    filepath = os.path.join(sublime.cache_path(), 'profile_manager.meta')
+    if os.path.isfile(filepath) == False:
+        return default
+
+    with open(filepath, 'r') as f:
+        data = json.loads(f.read())
+        if name in data:
+            return data[name]
+
+    return default
+
+def set_meta(name, value):
+    filepath = os.path.join(sublime.cache_path(), 'profile_manager.meta')
+    data = {}
+    if os.path.isfile(filepath):
+        with open(filepath, 'r') as f:
+            data = json.loads(f.read())
+            if name in data:
+                return data[name]
+
+    data[name] = value
+    with open(filepath, 'w') as f:
+        f.write(json.dumps(data))
+
 def get_active_profile():
-    return get_setting('active_profile', 'default')
+    return get_meta('active_profile', 'default')
 
 def current_package_status():
     local_packages = []
@@ -343,9 +372,9 @@ def delete_profile(profile_name):
         return
 
     # we're deleting the active profile, we must switch to the default one before deleting
-    if get_setting('active_profile', None) == profile_name:
+    if get_meta('active_profile', None) == profile_name:
         print('ProfileManager: Deleting active profile! Switching to default profile')
-        set_setting('active_profile', None) # don't sync the profile we're about to delete
+        set_meta('active_profile', None) # don't sync the profile we're about to delete
         switch_profile('default')
 
     # remove ${profile_name}
@@ -364,9 +393,19 @@ def are_identical(a,b):
     return json.dumps(a) == json.dumps(b)
 
 def sync_active_profile():
-    profile_name = get_setting('active_profile', None)
+    profile_name = get_meta('active_profile', None)
     if profile_name is None:
         print('ProfileManager: No profile selected!')
+        return
+
+    meta = gd.file_info('profiles_info')
+    if meta is None:
+        print('ProfileManager: Cannot sync changes to profile "{}" because no meta information can be found online!'.format(profile_name))
+        return
+
+    # someone else changed the profiles info, we can sync our local changes to the cloud
+    elif meta['md5Checksum'] != get_meta('profiles_info'):
+        print('ProfileManager: Cannot push updates to profile "{}" because of remote changes!'.format(profile_name))
         return
 
     print('ProfileManager: ----------------------------------------------------------------------------------')
@@ -397,6 +436,10 @@ def sync_active_profile():
 
     upload_local_packages_to(gd, new_profile)
     upload_settings_to(gd, profile_name)
+
+    # update the md5 of the profiles meta info
+    set_meta('profiles_info', md5_string(json.dumps(profile_info)))
+
     print('ProfileManager: ----------------------------------------------------------------------------------')
     print('ProfileManager: Synced profile "{}"'.format(profile_name))
     print('ProfileManager: ----------------------------------------------------------------------------------')
@@ -405,7 +448,7 @@ def switch_profile(profile_name):
     sync_active_profile()
 
     # same profile, nothing to do
-    if get_setting('active_profile', None) == profile_name:
+    if get_meta('active_profile', None) == profile_name:
         print('ProfileManager: Profile "{}" is already active!'.format(profile_name))
         return
 
@@ -415,8 +458,14 @@ def switch_profile(profile_name):
 
     gd = GDrive()
     gd.login()
-    data = gd.get_file_contents('profiles_info')
-    data = json.loads(data)
+
+    meta = gd.file_info('profiles_info')
+    if meta is None:
+        print('ProfileManager: Cannot switch to profile "{}" because no meta information can be found online!'.format(profile_name))
+        return
+
+    dataStr = gd.get_file_contents('profiles_info')
+    data = json.loads(dataStr)
 
     if profile_name not in [x['name'] for x in data['profiles']]:
         sublime.error_message('ProfileManager: There is no profile named: "{}"'.format(profile_name))
@@ -427,7 +476,7 @@ def switch_profile(profile_name):
 
     profile, idx = get_profile_data(data, profile_name)
 
-    set_setting('active_profile', profile_name)
+    set_meta('active_profile', profile_name)
 
     profile_installed_packages = [x for x in profile['installed_packages']]
     profile_local_packages = [x for x in profile['local_packages']]
@@ -505,6 +554,9 @@ def switch_profile(profile_name):
         print('ProfileManager: Enabling "{}"'.format(package))
         pd.reenable_package(package, 'enable')
 
+    # update the md5 of the profiles meta info
+    set_meta('profiles_info', md5_string(dataStr))
+
     update_profile_status()
 
 def download_settings_from(gd, profile_name):
@@ -523,7 +575,8 @@ def upload_settings_to(gd, profile_name):
     collect_user_settings(filename)
     push_cwd(sublime.packages_path())
     meta = gd.file_info(filename)
-    if meta is None or meta['md5Checksum'] != md5_file(filepath):
+    md5 = md5_file(filepath)
+    if meta is None or meta['md5Checksum'] != md5:
         print('ProfileManager: Updating user settings because they changed for profile "{}"'.format(profile_name))
         gd.upload_file(**{
             'title': filename,
@@ -602,8 +655,8 @@ def on_login(result):
             upload_local_packages(gdrive, data)
             upload_settings_to(gdrive, 'default')
             print('ProfileManager: Profiles synced!', data)
-        elif get_setting('active_profile', None) is None:
-            # new sublime instance, activate the default profile
+        # new sublime instance, activate the default profile
+        elif get_meta('active_profile', None) is None:
             print('ProfileManager: No profile selected, activating default profile!', data)
             switch_profile('default')
         else:
