@@ -230,14 +230,14 @@ class GDrive():
 gdrive = GDrive()
 
 def collect_user_settings(filename):
-    zipf = zipfile.ZipFile(os.path.join(dir_path, filename), 'w', zipfile.ZIP_DEFLATED)
+    zipf = zipfile.ZipFile(os.path.join(sublime.packages_path(), filename), 'w', zipfile.ZIP_DEFLATED)
     push_cwd(sublime.packages_path())
-    zipdir("User/", zipf, ['Package Control.cache'])
+    zipdir("User/", zipf, ['Package Control.cache', '.git'])
     pop_cwd()
     zipf.close()
 
 def extract_user_settings(filename):
-    zipf = zipfile.ZipFile(os.path.join(dir_path, filename), 'r', zipfile.ZIP_DEFLATED)
+    zipf = zipfile.ZipFile(os.path.join(sublime.packages_path(), filename), 'r', zipfile.ZIP_DEFLATED)
     push_cwd(sublime.packages_path())
     zipf.extractall('.')
     pop_cwd()
@@ -288,13 +288,15 @@ def current_package_status():
 
     return local_packages, sublime_packages, get_disabled_packages()
 
-# output a ${name}.zip file in the dir_path/${name}.zip location
+# output a ${name}.zip file in the sublime.packages_path()/${name}.zip location
 def zip_local_package(name):
-    zipf = zipfile.ZipFile(os.path.join(dir_path, name + '.zip'), 'w', zipfile.ZIP_DEFLATED)
+    filepath = os.path.join(sublime.packages_path(), name + '.zip')
+    zipf = zipfile.ZipFile(filepath, 'w', zipfile.ZIP_DEFLATED)
     push_cwd(sublime.packages_path())
-    zipdir(name, zipf)
+    zipdir(name, zipf, ['.git'])
     pop_cwd()
     zipf.close()
+
 
 
 def get_profile_data(data, name):
@@ -343,6 +345,7 @@ def delete_profile(profile_name):
     # we're deleting the active profile, we must switch to the default one before deleting
     if get_setting('active_profile', None) == profile_name:
         print('ProfileManager: Deleting active profile! Switching to default profile')
+        set_setting('active_profile', None) # don't sync the profile we're about to delete
         switch_profile('default')
 
     # remove ${profile_name}
@@ -361,14 +364,22 @@ def are_identical(a,b):
     return json.dumps(a) == json.dumps(b)
 
 def sync_active_profile():
-    profile_name = get_active_profile()
-    print('ProfileManager: Syncing profile "{}"'.format(profile_name))
+    profile_name = get_setting('active_profile', None)
+    if profile_name is None:
+        print('ProfileManager: No profile selected!')
+        return
 
-    gdrive = GDrive()
+    print('ProfileManager: ----------------------------------------------------------------------------------')
+    print('ProfileManager: Syncing profile "{}"'.format(profile_name))
+    print('ProfileManager: ----------------------------------------------------------------------------------')
+
     if gdrive.logged_in() == False:
+        print('ProfileManager: Cannot sync profile "{}" because we are not logged in!'.format(profile_name))
         return False
 
-    data = gdrive.get_file_contents('profiles_info')
+    gd = GDrive()
+    gd.login()
+    data = gd.get_file_contents('profiles_info')
     profile_info = json.loads(data)
 
     profile, idx = get_profile_data(profile_info, profile_name)
@@ -377,15 +388,18 @@ def sync_active_profile():
     # need to update the profile info
     if are_identical(new_profile, profile) == False:
         profile_info['profiles'][idx] = new_profile
-        gdrive.upload_file(**{
+        gd.upload_file(**{
             'title': 'profiles_info',
             'content': json.dumps(profile_info),
             'mimeType': 'text/json',
             'parents': [{'id': 'appDataFolder'}],
         })
 
-    upload_local_packages(profile_info)
-    upload_settings_to(profile_name)
+    upload_local_packages_to(gd, new_profile)
+    upload_settings_to(gd, profile_name)
+    print('ProfileManager: ----------------------------------------------------------------------------------')
+    print('ProfileManager: Synced profile "{}"'.format(profile_name))
+    print('ProfileManager: ----------------------------------------------------------------------------------')
 
 def switch_profile(profile_name):
     sync_active_profile()
@@ -395,7 +409,13 @@ def switch_profile(profile_name):
         print('ProfileManager: Profile "{}" is already active!'.format(profile_name))
         return
 
-    data = gdrive.get_file_contents('profiles_info')
+    if gdrive.logged_in() == False:
+        print('ProfileManager: Cannot sync profile "{}" because we are not logged in!'.format(profile_name))
+        return False
+
+    gd = GDrive()
+    gd.login()
+    data = gd.get_file_contents('profiles_info')
     data = json.loads(data)
 
     if profile_name not in [x['name'] for x in data['profiles']]:
@@ -406,7 +426,6 @@ def switch_profile(profile_name):
     pd = pdm.PackageDisabler()
 
     profile, idx = get_profile_data(data, profile_name)
-    print('profile is ', profile)
 
     set_setting('active_profile', profile_name)
 
@@ -418,21 +437,64 @@ def switch_profile(profile_name):
     local_packages, sublime_packages, disabled_packages = current_package_status()
 
     extra_sublime_packages = [x for x in sublime_packages if x not in profile_all_packages]
+    extra_local_packages = [x for x in local_packages if x not in profile_local_packages]
+    extra_packages = extra_sublime_packages + extra_local_packages
     missing_sublime_packages = [x for x in profile_installed_packages if x not in sublime_packages]
     missing_local_packages = [x for x in profile_local_packages if x not in local_packages]
     disable_sublime_packages = [x for x in profile_disabled_packages if x not in disabled_packages]
     enable_sublime_packages = [x for x in profile_all_packages if x in disabled_packages and x not in profile_disabled_packages ]
 
     print('--------------------------------------------------')
+    print('local_packages', local_packages)
+    print('sublime_packages', sublime_packages)
+    print('disabled_packages', disabled_packages)
+    print('--------------------------------------------------')
+    print('profile_installed_packages', profile_installed_packages)
+    print('profile_local_packages', profile_local_packages)
+    print('profile_disabled_packages', profile_disabled_packages)
+    print('profile_all_packages', profile_all_packages)
+    print('--------------------------------------------------')
+
+    print('--------------------------------------------------')
     print('missing_sublime_packages', missing_sublime_packages)
     print('extra_sublime_packages', extra_sublime_packages)
+    print('extra_local_packages', extra_local_packages)
     print('missing_local_packages', missing_local_packages)
     print('disable_sublime_packages', disable_sublime_packages)
     print('enable_sublime_packages', enable_sublime_packages)
     print('--------------------------------------------------')
 
+
+    if 'ProfileManager' in extra_local_packages:
+        extra_local_packages.remove('ProfileManager')
+    if 'ProfileManager' in extra_packages:
+        extra_packages.remove('ProfileManager')
+
     # extract user settings
-    download_settings_from(profile_name)
+    download_settings_from(gd, profile_name)
+
+    # install missing packages
+    for package in missing_sublime_packages:
+        print('ProfileManager: Installing "{}"'.format(package))
+        pm.install_package(package)
+
+    # uninstall packages not used by this profile
+    for package in extra_packages:
+        print('ProfileManager: Removing "{}"'.format(package))
+        pm.remove_package(package)
+
+    # install missing local packages
+    for package in missing_local_packages:
+        package = profile_name + "_" + package
+        print('ProfileManager: Installing local package "{}"'.format(package))
+        filepath = os.path.join(sublime.packages_path(), package) + '.zip'
+        gdrive.download_file(**{
+            'title': package,
+            'filepath': filepath,
+        })
+        # extract local package
+        extract_user_settings(package + '.zip')
+        # os.remove(filepath)
 
     # enable/disable installed packages not used by this profile
     for package in disable_sublime_packages:
@@ -443,49 +505,27 @@ def switch_profile(profile_name):
         print('ProfileManager: Enabling "{}"'.format(package))
         pd.reenable_package(package, 'enable')
 
-    # install missing packages
-    for package in missing_sublime_packages:
-        print('ProfileManager: Installing "{}"'.format(package))
-        pm.install_package(package)
-
-    # uninstall packages not used by this profile
-    for package in extra_sublime_packages:
-        print('ProfileManager: Removing "{}"'.format(package))
-        pm.remove_package(package)
-
-    # install missing local packages
-    for package in missing_local_packages:
-        print('ProfileManager: Installing local package "{}"'.format(package))
-        filepath = os.path.join(dir_path, package) + '.zip'
-        gdrive.download_file(**{
-            'title': package,
-            'filepath': filepath,
-        })
-        # extract local package
-        extract_user_settings(package + '.zip')
-        os.remove(filepath)
-
     update_profile_status()
 
-def download_settings_from(profile_name):
+def download_settings_from(gd, profile_name):
     filename = profile_name + '-user-settings.zip'
-    filepath = os.path.join(dir_path, filename)
-    gdrive.download_file(**{
+    filepath = os.path.join(sublime.packages_path(), filename)
+    gd.download_file(**{
         'title': filename,
         'filepath': filepath,
     })
     extract_user_settings(filename)
     os.remove(filepath)
 
-def upload_settings_to(profile_name):
+def upload_settings_to(gd, profile_name):
     filename = profile_name + '-user-settings.zip'
-    filepath = os.path.join(dir_path, filename)
+    filepath = os.path.join(sublime.packages_path(), filename)
     collect_user_settings(filename)
     push_cwd(sublime.packages_path())
-    meta = gdrive.file_info(filename)
+    meta = gd.file_info(filename)
     if meta is None or meta['md5Checksum'] != md5_file(filepath):
         print('ProfileManager: Updating user settings because they changed for profile "{}"'.format(profile_name))
-        gdrive.upload_file(**{
+        gd.upload_file(**{
             'title': filename,
             'content': filepath,
             'mimeType': 'application/zip',
@@ -497,31 +537,39 @@ def upload_settings_to(profile_name):
     os.remove(filepath)
     pop_cwd()
 
-def upload_local_packages(data):
+def upload_local_packages_to(gd, profile_info):
     packages = set()
-    for profile in data['profiles']:
-        for package in profile['local_packages']:
-            packages.add(package)
+    profile_name = profile_info['name']
+
+    for package in profile_info['local_packages']:
+        packages.add(package)
 
     for name in packages:
-        meta = gdrive.file_info(name)
-        filepath = os.path.join(dir_path, name + ".zip")
+        packageName = name
+        name = profile_name + "_" + packageName
+        meta = gd.file_info(name)
+        filepath = os.path.join(sublime.packages_path(), packageName + ".zip")
         if os.path.isfile(filepath):
             os.remove(filepath)
 
-        zip_local_package(name)
+        zip_local_package(packageName)
         upload_reason = ''
         if meta is None:
             upload_reason = '{} was not uploaded'.format(name)
         elif meta['md5Checksum'] != md5_file(filepath):
             upload_reason = '{} is out of date'.format(name)
+            # gd.download_file(**{
+            #     'title': name,
+            #     'filepath': filepath + '.cloud.zip',
+            # })
+
         else:
             print('ProfileManager:  Skipping {} because it is up to date!'.format(name))
             os.remove(filepath)
             continue
 
         print('ProfileManager: Uploading local package because {}'.format(upload_reason))
-        gdrive.upload_file(**{
+        gd.upload_file(**{
             'title': name,
             'content': filepath,
             'mimeType': 'application/zip',
@@ -551,9 +599,13 @@ def on_login(result):
                 'mimeType': 'text/json',
                 'parents': [{'id': 'appDataFolder'}],
             })
-            upload_local_packages(data)
-            upload_settings_to('default')
+            upload_local_packages(gdrive, data)
+            upload_settings_to(gdrive, 'default')
             print('ProfileManager: Profiles synced!', data)
+        elif get_setting('active_profile', None) is None:
+            # new sublime instance, activate the default profile
+            print('ProfileManager: No profile selected, activating default profile!', data)
+            switch_profile('default')
         else:
             print('ProfileManager: Loaded user profile!')
 
@@ -578,7 +630,6 @@ class ProfilesList(sublime_plugin.ApplicationCommand):
             profiles = [x['name'] for x in data['profiles']]
             profiles.remove(get_active_profile())
             profiles = [get_active_profile()] + profiles
-            print('profiles', profiles, get_active_profile())
             sublime.active_window().show_quick_panel(profiles, lambda x: None)
 
 class ProfilesSwitch(sublime_plugin.ApplicationCommand):
@@ -592,8 +643,11 @@ class ProfilesSwitch(sublime_plugin.ApplicationCommand):
             profile_names = [x['name'] for x in data['profiles']]
             profile_names.remove(get_active_profile())
             def fun(x):
-                if x >= 0:
-                    switch_profile(profile_names[x])
+                if x < 0:
+                    return
+
+                t = threading.Thread(target=lambda : switch_profile(profile_names[x]) )
+                t.start()
             sublime.active_window().show_quick_panel(profile_names, fun)
 
 class ProfilesDelete(sublime_plugin.ApplicationCommand):
@@ -607,8 +661,11 @@ class ProfilesDelete(sublime_plugin.ApplicationCommand):
             profile_names = [x['name'] for x in data['profiles']]
             profile_names.remove('default')
             def fun(x):
-                if x >= 0:
-                    delete_profile(profile_names[x])
+                if x < 0:
+                    return
+
+                t = threading.Thread(target=lambda : delete_profile(profile_names[x]) )
+                t.start()
             sublime.active_window().show_quick_panel(profile_names, fun)
 
 class ProfilesSync(sublime_plugin.ApplicationCommand):
@@ -617,7 +674,8 @@ class ProfilesSync(sublime_plugin.ApplicationCommand):
             content = 'ProfileManager: You are not logged in, please try to log in manually using the "ProfileManager: Login" command'
             sublime.error_message(content)
         else:
-            sync_active_profile()
+            t = threading.Thread(target=sync_active_profile)
+            t.start()
 
 
 class ProfilesCreate(sublime_plugin.ApplicationCommand):
@@ -636,23 +694,22 @@ sync_thread = None
 def sync_active_profile_thread():
     global keep_syncing
     global syncing
-    last_time = time.time() - sync_time
+    last_time = time.time()
 
     try:
         while keep_syncing:
             elapsed_time = time.time() - last_time
             if elapsed_time >= sync_time:
-                print('ProfileManager: syncing!')
                 last_time = time.time()
                 sync_active_profile()
-                print('ProfileManager: syncing complete!')
+                print('ProfileManager: Syncing complete!')
             time.sleep(0.1)
     except Exception as e:
         traceback.print_exc(e)
         print('ProfileManager: sync thread exception caught!', e)
 
     syncing = False
-    print('ProfileManager: sync thread stopped!')
+    # print('ProfileManager: sync thread stopped!')
 
 def update_profile_status():
     profile = get_active_profile()
@@ -662,18 +719,18 @@ def update_profile_status():
 
 def plugin_loaded():
     global sync_thread
-    print('ProfileManager: sync thread started!')
+    # print('ProfileManager: sync thread started!')
     sync_thread = threading.Thread(target=sync_active_profile_thread)
     sync_thread.start()
     update_profile_status()
 
 def plugin_unloaded():
-    print('ProfileManager: plugin_unloaded!')
+    # print('ProfileManager: plugin_unloaded!')
     global sync_thread
     global keep_syncing
     keep_syncing = False
     while syncing:
-        print('ProfileManager: waiting for sync thread to settle!')
+        # print('ProfileManager: waiting for sync thread to settle!')
         time.sleep(0.1)
     if sync_thread is not None:
         sync_thread.join()
