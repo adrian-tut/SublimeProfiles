@@ -209,6 +209,7 @@ class GDrive():
 
     def login(self, timeout = 30):
         if self.logged_in():
+            print('ProfileManager: You are logged in!')
             return True
         push_cwd(dir_path)
         gauth = GoogleAuth()
@@ -294,8 +295,6 @@ def set_meta(name, value):
     if os.path.isfile(filepath):
         with open(filepath, 'r') as f:
             data = json.loads(f.read())
-            if name in data:
-                return data[name]
 
     data[name] = value
     with open(filepath, 'w') as f:
@@ -357,7 +356,8 @@ def create_profile(profile_name):
         'mimeType': 'text/json',
         'parents': [{'id': 'appDataFolder'}],
     })
-    print('ProfileManager: Created profile "{}"'.format(profile_name))
+    upload_settings_to(gdrive, profile_name)
+    sublime.message_dialog('ProfileManager: Created profile "{}"'.format(profile_name))
 
 
 def delete_profile(profile_name):
@@ -387,7 +387,7 @@ def delete_profile(profile_name):
         'mimeType': 'text/json',
         'parents': [{'id': 'appDataFolder'}],
     })
-    print('ProfileManager: Deleted profile "{}"'.format(profile_name))
+    sublime.message_dialog('ProfileManager: Deleted profile "{}"'.format(profile_name))
 
 def are_identical(a,b):
     return json.dumps(a) == json.dumps(b)
@@ -703,6 +703,11 @@ class ProfilesSwitch(sublime_plugin.ApplicationCommand):
                 t = threading.Thread(target=lambda : switch_profile(profile_names[x]) )
                 t.start()
             sublime.active_window().show_quick_panel(profile_names, fun)
+
+
+class ProfilesUpdate(sublime_plugin.ApplicationCommand):
+    def run(self):
+        bidirectional_sync()
 
 class ProfilesDelete(sublime_plugin.ApplicationCommand):
     def run(self):

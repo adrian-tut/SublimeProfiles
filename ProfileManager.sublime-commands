@@ -4,5 +4,6 @@
     { "caption": "ProfileManager: Delete Profile", "command": "profiles_delete" },
     { "caption": "ProfileManager: Switch Profile", "command": "profiles_switch" },
     { "caption": "ProfileManager: Sync Profile", "command": "profiles_sync" },
+    { "caption": "ProfileManager: Update Profile", "command": "profiles_update" },
     { "caption": "ProfileManager: List Profiles", "command": "profiles_list" },
 ]
